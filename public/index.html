@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f3f6f3">
+  <title>モルック得点表</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --background: #f3f6f3;
+      --surface: #fff;
+      --text: #172a23;
+      --muted: #4f6359;
+      --line: #d8e3db;
+      --accent: #175b41;
+      --accent-hover: #10432f;
+      --highlight: #e5f3e8;
+      --miss: #923b29;
+      font-family: "Inter", "Hiragino Sans", "Yu Gothic UI", system-ui, sans-serif;
+      color: var(--text);
+      background: var(--background);
+    }
+
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { margin: 0; }
+    main { width: min(960px, 100%); margin-inline: auto; padding: 32px 20px 48px; }
+    h1, h2, p { margin: 0; }
+    h1 { font-size: clamp(1.45rem, 3.7vw, 2rem); letter-spacing: -.04em; }
+    h2 { font-size: 1rem; }
+
+    .top {
+      min-height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      column-gap: 16px;
+      row-gap: 8px;
+      margin-bottom: 20px;
+    }
+
+    .panel { padding: 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; }
+    .setup { max-width: 540px; }
+    .setup h2 { margin-bottom: 14px; }
+    .team-fields { list-style: none; display: grid; gap: 8px; padding: 0; margin: 0 0 16px; }
+    .team-field { display: grid; grid-template-columns: 1.25rem minmax(0, 1fr) 44px; gap: 8px; align-items: center; }
+    .team-order { text-align: center; color: var(--muted); font-size: .875rem; font-variant-numeric: tabular-nums; }
+    .team-field input {
+      width: 100%;
+      min-height: 44px;
+      padding: 8px 11px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      color: var(--text);
+      background: var(--surface);
+      font: inherit;
+    }
+
+    button {
+      min-height: 44px;
+      padding: 8px 14px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      color: var(--text);
+      background: var(--surface);
+      font: inherit;
+      font-size: .9rem;
+      font-weight: 650;
+      line-height: 1.2;
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+    button:disabled { opacity: .46; cursor: default; }
+    button:focus-visible, input:focus-visible, summary:focus-visible {
+      outline: 3px solid #247554;
+      outline-offset: 3px;
+    }
+    .remove-team { padding: 0; font-size: 1.2rem; color: var(--muted); }
+    .primary { border-color: var(--accent); color: #fff; background: var(--accent); }
+    .setup-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .setup-actions .primary { flex: 1; }
+
+    .game { display: grid; grid-template-columns: minmax(0, 1fr) minmax(290px, .8fr); align-items: start; gap: 14px; }
+    .scoreboard { padding: 8px; }
+    .scoreboard table { border-spacing: 0 4px; width: 100%; table-layout: fixed; }
+    .scoreboard th, .scoreboard td { padding: 10px; }
+    .scoreboard thead th { font-size: .77rem; font-weight: 650; color: var(--muted); white-space: nowrap; }
+    .scoreboard thead th:nth-child(2) { width: 4.1rem; text-align: right; }
+    .scoreboard thead th:nth-child(3) { width: 6.3rem; }
+    .scoreboard th:first-child { text-align: left; }
+    .scoreboard tbody th { border-radius: 10px 0 0 10px; overflow-wrap: anywhere; }
+    .scoreboard tbody td:last-child { border-radius: 0 10px 10px 0; text-align: center; }
+    .scoreboard tbody tr[data-state] { background: var(--highlight); }
+    .scoreboard tbody tr[data-state="out"] { background: var(--background); color: var(--muted); }
+    .scoreboard .score {
+      font-size: 1.65rem;
+      text-align: right;
+      line-height: 1;
+      font-weight: 750;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -.045em;
+    }
+    .row-label { display: block; color: var(--accent); font-size: .75rem; margin-top: 3px; }
+    .row-label:empty { display: none; }
+    .miss-dots { display: inline-flex; gap: 5px; align-items: center; vertical-align: middle; }
+    .miss-dot { width: 9px; height: 9px; border: 1px solid #859b8d; border-radius: 50%; }
+    .miss-dot.filled { background: var(--miss); border-color: var(--miss); }
+    .out { color: var(--miss); font-size: .8rem; font-weight: 700; }
+
+    .turn { min-height: 46px; margin-bottom: 12px; }
+    .turn-label { display: block; margin-bottom: 4px; color: var(--muted); font-size: .78rem; font-weight: 650; }
+    .turn-name { font-size: clamp(1.18rem, 3vw, 1.5rem); letter-spacing: -.024em; overflow-wrap: anywhere; }
+    .keypad { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
+    .key { min-height: 49px; font-size: 1.2rem; font-variant-numeric: tabular-nums; }
+    .miss-key { grid-column: span 4; font-size: .9rem; color: var(--miss); background: #fff8f4; border-color: #ead7cd; }
+    .control-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+    .control-actions button { flex: 1; }
+    .log { grid-column: 1 / -1; padding: 0 14px; }
+    .log summary {
+      display: list-item;
+      min-height: 44px;
+      padding: 13px 0 11px;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: .9rem;
+      font-weight: 650;
+    }
+    .log ol { list-style: none; padding: 0; margin: 0 0 10px; max-height: 240px; overflow-y: auto; }
+    .log li {
+      display: grid;
+      grid-template-columns: 2rem minmax(0, 1fr) auto;
+      gap: 6px;
+      padding: 9px 4px;
+      border-top: 1px solid var(--line);
+      font-size: .875rem;
+      font-variant-numeric: tabular-nums;
+    }
+    .log li span:first-child, .log li span:last-child { color: var(--muted); }
+    .log li span:nth-child(2) { overflow-wrap: anywhere; }
+    .storage-message { margin-bottom: 12px; color: var(--miss); font-size: .875rem; }
+    @media (hover: hover) {
+      button:not(:disabled):hover { background: var(--highlight); }
+      button.primary:not(:disabled):hover { background: var(--accent-hover); }
+      button.miss-key:not(:disabled):hover { background: #faeae2; }
+    }
+    @media (max-width: 640px) {
+      main { padding: 16px 12px 28px; }
+      .top { margin-bottom: 12px; }
+      .game { grid-template-columns: minmax(0, 1fr); gap: 9px; }
+      .controls { grid-row: 1; padding: 13px; }
+      .turn { min-height: 0; margin-bottom: 9px; }
+      .scoreboard th, .scoreboard td { padding: 8px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header class="top">
+      <h1>モルック得点表</h1>
+      <button id="edit-teams" type="button" hidden>チーム設定</button>
+    </header>
+    <p id="storage-message" class="storage-message" role="status" hidden>このブラウザーでは試合を自動保存できません。</p>
+
+    <form id="setup" class="panel setup">
+      <h2>チーム（投球順）</h2>
+      <ol id="team-fields" class="team-fields"></ol>
+      <div class="setup-actions">
+        <button id="add-team" type="button">チーム追加</button>
+        <button class="primary" type="submit">試合開始</button>
+      </div>
+    </form>
+
+    <section id="game" class="game" aria-label="試合" hidden>
+      <div class="panel scoreboard">
+        <table aria-label="得点表">
+          <thead><tr><th scope="col">チーム</th><th scope="col">得点</th><th scope="col">連続ミス</th></tr></thead>
+          <tbody id="scoreboard"></tbody>
+        </table>
+      </div>
+      <section class="panel controls" aria-label="得点入力">
+        <h2 class="turn" aria-live="polite" aria-atomic="true">
+          <span id="turn-label" class="turn-label"></span>
+          <span id="turn-name" class="turn-name"></span>
+        </h2>
+        <div id="keypad" class="keypad" role="group" aria-label="投球点"></div>
+        <div class="control-actions">
+          <button id="undo" type="button">1投戻す</button>
+          <button id="next-game" class="primary" type="button" hidden>次の試合</button>
+        </div>
+      </section>
+      <details id="history" class="panel log" hidden>
+        <summary>投球履歴</summary>
+        <ol id="history-list"></ol>
+      </details>
+    </section>
+  </main>
+
+  <template id="team-row">
+    <li class="team-field">
+      <span class="team-order" aria-hidden="true"></span>
+      <input type="text" maxlength="40" autocomplete="off">
+      <button class="remove-team" type="button">×</button>
+    </li>
+  </template>
+  <template id="score-row">
+    <tr>
+      <th scope="row"><span class="team-name"></span><span class="row-label"></span></th>
+      <td class="score"></td>
+      <td class="misses"></td>
+    </tr>
+  </template>
+
+  <script>
+    "use strict";
+
+    const STORAGE_KEY = "molkey-score-v1";
+    const TARGET = 50;
+    const RESET_SCORE = 25;
+    const MISS_LIMIT = 3;
+    const MAX_THROW = 12;
+    const defaultName = index => `チーム${index + 1}`;
+    const byId = id => document.getElementById(id);
+    const setup = byId("setup");
+    const game = byId("game");
+    const teamFields = byId("team-fields");
+    const keypad = byId("keypad");
+    const undo = byId("undo");
+    const editTeams = byId("edit-teams");
+    const nextGame = byId("next-game");
+    const history = byId("history");
+    let state = load();
+
+    function load() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
+        if (saved && Array.isArray(saved.names) && saved.names.length >= 2 &&
+            saved.names.every(name => typeof name === "string") && Array.isArray(saved.throws) &&
+            saved.throws.every(points => Number.isInteger(points) && points >= 0 && points <= MAX_THROW) &&
+            typeof saved.started === "boolean") {
+          return saved;
+        }
+      } catch {
+        // Start with an empty game if the saved state cannot be read.
+      }
+      return { names: [defaultName(0), defaultName(1)], throws: [], started: false };
+    }
+
+    function save() {
+      const message = byId("storage-message");
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        message.hidden = true;
+      } catch {
+        message.hidden = false;
+      }
+    }
+
+    function replay() {
+      const teams = state.names.map(name => ({ name, score: 0, misses: 0 }));
+      const entries = [];
+      let turn = 0;
+      let winner = null;
+
+      for (const points of state.throws) {
+        if (winner !== null) break;
+
+        const team = teams[turn];
+        team.misses = points === 0 ? team.misses + 1 : 0;
+        team.score += points;
+        if (team.score > TARGET) team.score = RESET_SCORE;
+        if (team.misses === MISS_LIMIT) team.score = 0;
+        entries.push({ team, points, total: team.score, out: team.misses === MISS_LIMIT });
+
+        if (team.score === TARGET) {
+          winner = team;
+          break;
+        }
+
+        const remaining = teams.filter(candidate => candidate.misses < MISS_LIMIT);
+        if (remaining.length === 1) {
+          winner = remaining[0];
+          winner.score = TARGET;
+          break;
+        }
+
+        do {
+          turn = (turn + 1) % teams.length;
+        } while (teams[turn].misses === MISS_LIMIT);
+      }
+
+      return { teams, entries, active: teams[turn], winner };
+    }
+
+    function renderSetup() {
+      teamFields.replaceChildren();
+      state.names.forEach((name, index) => {
+        const row = byId("team-row").content.cloneNode(true);
+        row.querySelector(".team-order").textContent = index + 1;
+        const input = row.querySelector("input");
+        input.value = name;
+        input.placeholder = defaultName(index);
+        input.setAttribute("aria-label", `${index + 1}番目のチーム名`);
+        input.addEventListener("input", () => {
+          state.names[index] = input.value;
+          save();
+        });
+        const remove = row.querySelector("button");
+        remove.setAttribute("aria-label", `${index + 1}番目のチームを削除`);
+        remove.disabled = state.names.length === 2;
+        remove.addEventListener("click", () => {
+          state.names.splice(index, 1);
+          save();
+          renderSetup();
+          teamFields.children[Math.min(index, state.names.length - 1)].querySelector("input").focus();
+        });
+        teamFields.append(row);
+      });
+    }
+
+    function renderScoreboard(teams, active, winner) {
+      const rows = teams.map(team => {
+        const row = byId("score-row").content.firstElementChild.cloneNode(true);
+        row.querySelector(".team-name").textContent = team.name;
+        row.querySelector(".score").textContent = team.score;
+        const label = row.querySelector(".row-label");
+        const misses = row.querySelector(".misses");
+        if (team === winner) {
+          row.dataset.state = "winner";
+          label.textContent = "勝利";
+        } else if (!winner && team === active) {
+          row.dataset.state = "active";
+          label.textContent = "投球中";
+        }
+        if (team.misses === MISS_LIMIT) {
+          row.dataset.state = "out";
+          const out = document.createElement("span");
+          out.className = "out";
+          out.textContent = "失格";
+          misses.append(out);
+        } else {
+          const dots = document.createElement("span");
+          dots.className = "miss-dots";
+          dots.setAttribute("role", "img");
+          dots.setAttribute("aria-label", `連続ミス ${team.misses}回`);
+          for (let index = 0; index < MISS_LIMIT; index += 1) {
+            const dot = document.createElement("span");
+            dot.className = index < team.misses ? "miss-dot filled" : "miss-dot";
+            dots.append(dot);
+          }
+          misses.append(dots);
+        }
+        return row;
+      });
+      byId("scoreboard").replaceChildren(...rows);
+    }
+
+    function renderHistory(entries) {
+      history.hidden = entries.length === 0;
+      if (!history.open || history.hidden) return;
+
+      const rows = entries.map(({ team, points, total, out }, index) => {
+        const row = document.createElement("li");
+        for (const text of [index + 1, team.name, out ? "ミス → 失格" : `${points === 0 ? "ミス" : `+${points}`} → ${total}点`]) {
+          const cell = document.createElement("span");
+          cell.textContent = text;
+          row.append(cell);
+        }
+        return row;
+      });
+      byId("history-list").replaceChildren(...rows.reverse());
+    }
+
+    function renderGame() {
+      const { teams, entries, active, winner } = replay();
+      renderScoreboard(teams, active, winner);
+      byId("turn-label").textContent = winner ? "勝利" : "投球チーム";
+      byId("turn-name").textContent = (winner ?? active).name;
+      keypad.hidden = Boolean(winner);
+      nextGame.hidden = !winner;
+      undo.disabled = entries.length === 0;
+      renderHistory(entries);
+      return winner;
+    }
+
+    function renderView() {
+      setup.hidden = state.started;
+      game.hidden = !state.started;
+      editTeams.hidden = !state.started;
+      if (state.started) renderGame();
+      else renderSetup();
+    }
+
+    function startGame() {
+      state.names = state.names.map((name, index) => name.trim() || defaultName(index));
+      state.started = true;
+      state.throws = [];
+      history.open = false;
+      save();
+      renderView();
+      keypad.firstElementChild.focus();
+    }
+
+    for (let points = 1; points <= MAX_THROW + 1; points += 1) {
+      const isMiss = points > MAX_THROW;
+      const key = document.createElement("button");
+      key.type = "button";
+      key.className = isMiss ? "key miss-key" : "key";
+      key.textContent = isMiss ? "ミス（0点）" : points;
+      if (!isMiss) key.setAttribute("aria-label", `${points}点`);
+      key.addEventListener("click", () => {
+        if (!state.started || keypad.hidden) return;
+        state.throws.push(isMiss ? 0 : points);
+        save();
+        if (renderGame()) nextGame.focus();
+      });
+      keypad.append(key);
+    }
+
+    byId("add-team").addEventListener("click", () => {
+      let index = state.names.length;
+      while (state.names.includes(defaultName(index))) index += 1;
+      state.names.push(defaultName(index));
+      save();
+      renderSetup();
+      teamFields.lastElementChild.querySelector("input").select();
+    });
+
+    setup.addEventListener("submit", event => {
+      event.preventDefault();
+      startGame();
+    });
+
+    undo.addEventListener("click", () => {
+      if (!state.started || state.throws.length === 0) return;
+      state.throws.pop();
+      save();
+      renderGame();
+      if (undo.disabled) keypad.firstElementChild.focus();
+    });
+    nextGame.addEventListener("click", startGame);
+
+    editTeams.addEventListener("click", () => {
+      if (state.throws.length && !replay().winner &&
+          !window.confirm("進行中の試合を終了して、チーム設定を開きますか？")) return;
+      state.started = false;
+      state.throws = [];
+      save();
+      renderView();
+      teamFields.firstElementChild.querySelector("input").focus();
+    });
+
+    history.addEventListener("toggle", () => {
+      if (history.open) renderHistory(replay().entries);
+    });
+    window.addEventListener("storage", event => {
+      if (event.key === STORAGE_KEY) {
+        state = load();
+        renderView();
+      }
+    });
+    renderView();
+  </script>
+</body>
+</html>
