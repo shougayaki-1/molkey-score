@@ -153,6 +153,37 @@
       .turn { min-height: 0; margin-bottom: 9px; }
       .scoreboard th, .scoreboard td { padding: 8px; }
     }
+
+    .setup { max-width: 620px; }
+    .setup-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
+    .setup-heading h2 { margin-bottom: 0; }
+    .mode-switch { display: inline-flex; padding: 3px; gap: 3px; border: 1px solid var(--line); border-radius: 11px; }
+    .mode-switch button { min-height: 36px; padding: 7px 14px; border: 0; }
+    .mode-switch button[aria-pressed="true"] { color: #fff; background: var(--accent); }
+    #manual-area > h2 { margin-bottom: 12px; }
+    .field-title { display: block; margin-bottom: 8px; font-size: .9rem; font-weight: 650; }
+    #players { display: block; width: 100%; min-height: 125px; resize: vertical; padding: 12px; border: 1px solid var(--line); border-radius: 10px; color: var(--text); background: #fff; font: inherit; line-height: 1.65; }
+    #players:focus-visible { outline: 3px solid #247554; outline-offset: 3px; }
+    .auto-actions { display: flex; align-items: end; gap: 10px; margin-top: 14px; }
+    .auto-actions > button { margin-left: auto; }
+    .number-field { display: inline-flex; align-items: center; gap: 10px; font-size: .9rem; font-weight: 650; }
+    .number-field input { width: 76px; height: 44px; padding: 7px 9px; font: inherit; font-variant-numeric: tabular-nums; text-align: center; border: 1px solid var(--line); border-radius: 9px; background: #fff; color: var(--text); }
+    .team-preview { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 9px; margin-top: 15px; }
+    .preview-card { border: 1px solid var(--line); border-radius: 11px; padding: 12px; background: var(--background); min-width: 0; }
+    .preview-card strong { display: block; margin-bottom: 6px; font-size: .9rem; }
+    .preview-card ul { margin: 0; padding-left: 1.25rem; line-height: 1.8; font-size: .9rem; overflow-wrap: anywhere; }
+    .rule-settings { margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--line); }
+    .start-game { width: 100%; margin-top: 18px; }
+    .form-error { margin-top: 10px; color: var(--miss); font-size: .875rem; }
+    .team-members { display: block; color: var(--muted); font-size: .76rem; font-weight: 400; line-height: 1.5; overflow-wrap: anywhere; }
+    .team-members:empty { display: none; }
+    .miss-count { font-size: .88rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .miss-count.alert { color: var(--miss); font-weight: 700; }
+    @media (max-width: 640px) {
+      .setup { padding: 16px; }
+      .team-preview { grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); }
+      .scoreboard thead th:nth-child(3) { width: 5.8rem; }
+    }
   </style>
 </head>
 <body>
@@ -164,12 +195,40 @@
     <p id="storage-message" class="storage-message" role="status" hidden>このブラウザーでは試合を自動保存できません。</p>
 
     <form id="setup" class="panel setup">
-      <h2>チーム（投球順）</h2>
-      <ol id="team-fields" class="team-fields"></ol>
-      <div class="setup-actions">
-        <button id="add-team" type="button">チーム追加</button>
-        <button class="primary" type="submit">試合開始</button>
+      <div class="setup-heading">
+        <h2>チーム設定</h2>
+        <div class="mode-switch" role="group" aria-label="チーム作成方法">
+          <button id="mode-manual" type="button" aria-pressed="true">手動</button>
+          <button id="mode-auto" type="button" aria-pressed="false">自動</button>
+        </div>
       </div>
+
+      <div id="manual-area">
+        <h2>チーム（投球順）</h2>
+        <ol id="team-fields" class="team-fields"></ol>
+        <button id="add-team" type="button">チーム追加</button>
+      </div>
+
+      <div id="auto-area" hidden>
+        <label class="field-title" for="players">選手（1行に1人）</label>
+        <textarea id="players" rows="6" spellcheck="false" placeholder="選手1&#10;選手2&#10;選手3&#10;選手4"></textarea>
+        <div class="auto-actions">
+          <label class="number-field" for="team-count">チーム数
+            <input id="team-count" type="number" min="2" step="1" inputmode="numeric" value="2">
+          </label>
+          <button id="shuffle" type="button">シャッフル</button>
+        </div>
+        <p id="team-warning" class="form-error" role="status" hidden></p>
+        <div id="team-preview" class="team-preview" aria-live="polite"></div>
+      </div>
+
+      <div class="rule-settings">
+        <label class="number-field" for="miss-limit">連続ミスで失格
+          <input id="miss-limit" type="number" min="1" step="1" inputmode="numeric" value="3">
+          <span>回</span>
+        </label>
+      </div>
+      <button id="start-game" class="primary start-game" type="submit">試合開始</button>
     </form>
 
     <section id="game" class="game" aria-label="試合" hidden>
@@ -206,7 +265,7 @@
   </template>
   <template id="score-row">
     <tr>
-      <th scope="row"><span class="team-name"></span><span class="row-label"></span></th>
+      <th scope="row"><span class="team-name"></span><span class="team-members"></span><span class="row-label"></span></th>
       <td class="score"></td>
       <td class="misses"></td>
     </tr>
@@ -218,9 +277,8 @@
     const STORAGE_KEY = "molkey-score-v1";
     const TARGET = 50;
     const RESET_SCORE = 25;
-    const MISS_LIMIT = 3;
     const MAX_THROW = 12;
-    const defaultName = index => `チーム${index + 1}`;
+    const defaultName = index => "チーム" + (index + 1);
     const byId = id => document.getElementById(id);
     const setup = byId("setup");
     const game = byId("game");
@@ -230,21 +288,53 @@
     const editTeams = byId("edit-teams");
     const nextGame = byId("next-game");
     const history = byId("history");
+    const playersInput = byId("players");
+    const teamCountInput = byId("team-count");
+    const missLimitInput = byId("miss-limit");
     let state = load();
 
     function load() {
+      const fallback = {
+        names: ["チーム1", "チーム2"],
+        manualNames: ["チーム1", "チーム2"],
+        throws: [],
+        started: false,
+        mode: "manual",
+        rosterText: "",
+        teamCount: 2,
+        assignments: [],
+        missLimit: 3
+      };
       try {
         const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-        if (saved && Array.isArray(saved.names) && saved.names.length >= 2 &&
-            saved.names.every(name => typeof name === "string") && Array.isArray(saved.throws) &&
-            saved.throws.every(points => Number.isInteger(points) && points >= 0 && points <= MAX_THROW) &&
-            typeof saved.started === "boolean") {
-          return saved;
-        }
+        if (!saved ||
+            !Array.isArray(saved.names) || saved.names.length < 2 ||
+            !saved.names.every(name => typeof name === "string") ||
+            !Array.isArray(saved.throws) ||
+            !saved.throws.every(points => Number.isInteger(points) && points >= 0 && points <= MAX_THROW) ||
+            typeof saved.started !== "boolean") return fallback;
+        const manualNames = Array.isArray(saved.manualNames) &&
+          saved.manualNames.length >= 2 &&
+          saved.manualNames.every(name => typeof name === "string")
+          ? saved.manualNames : saved.names.slice();
+        return {
+          names: saved.names,
+          manualNames,
+          throws: saved.throws,
+          started: saved.started,
+          mode: saved.mode === "auto" ? "auto" : "manual",
+          rosterText: typeof saved.rosterText === "string" ? saved.rosterText : "",
+          teamCount: Number.isSafeInteger(saved.teamCount) && saved.teamCount >= 2 ? saved.teamCount : 2,
+          assignments: Array.isArray(saved.assignments) &&
+            saved.assignments.every(group => Array.isArray(group) &&
+              group.every(name => typeof name === "string"))
+            ? saved.assignments : [],
+          missLimit: Number.isSafeInteger(saved.missLimit) && saved.missLimit >= 1
+            ? saved.missLimit : 3
+        };
       } catch {
-        // Start with an empty game if the saved state cannot be read.
+        return fallback;
       }
-      return { names: [defaultName(0), defaultName(1)], throws: [], started: false };
     }
 
     function save() {
@@ -257,99 +347,192 @@
       }
     }
 
-    function replay() {
-      const teams = state.names.map(name => ({ name, score: 0, misses: 0 }));
-      const entries = [];
-      let turn = 0;
-      let winner = null;
-
-      for (const points of state.throws) {
-        if (winner !== null) break;
-
-        const team = teams[turn];
-        team.misses = points === 0 ? team.misses + 1 : 0;
-        team.score += points;
-        if (team.score > TARGET) team.score = RESET_SCORE;
-        if (team.misses === MISS_LIMIT) team.score = 0;
-        entries.push({ team, points, total: team.score, out: team.misses === MISS_LIMIT });
-
-        if (team.score === TARGET) {
-          winner = team;
-          break;
-        }
-
-        const remaining = teams.filter(candidate => candidate.misses < MISS_LIMIT);
-        if (remaining.length === 1) {
-          winner = remaining[0];
-          winner.score = TARGET;
-          break;
-        }
-
-        do {
-          turn = (turn + 1) % teams.length;
-        } while (teams[turn].misses === MISS_LIMIT);
-      }
-
-      return { teams, entries, active: teams[turn], winner };
+    function roster() {
+      return state.rosterText.split(/\r?\n/).map(name => name.trim()).filter(Boolean);
     }
 
-    function renderSetup() {
+    function validTeamCount() {
+      const count = state.teamCount;
+      return Number.isSafeInteger(count) && count >= 2 && count <= roster().length;
+    }
+
+    function validAssignments() {
+      if (!validTeamCount() || state.assignments.length !== state.teamCount) return false;
+      const source = roster();
+      const expected = new Map();
+      for (const name of source) expected.set(name, (expected.get(name) || 0) + 1);
+      let assigned = 0;
+      for (const group of state.assignments) {
+        if (!Array.isArray(group) || group.length === 0) return false;
+        if (group.length < Math.floor(source.length / state.teamCount) ||
+            group.length > Math.ceil(source.length / state.teamCount)) return false;
+        for (const name of group) {
+          const count = expected.get(name) || 0;
+          if (count === 0) return false;
+          expected.set(name, count - 1);
+          assigned++;
+        }
+      }
+      return assigned === source.length;
+    }
+
+    function shuffleTeams() {
+      if (!validTeamCount()) return false;
+      const mixed = roster().slice();
+      for (let i = mixed.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [mixed[i], mixed[j]] = [mixed[j], mixed[i]];
+      }
+      state.assignments = Array.from({ length: state.teamCount }, () => []);
+      mixed.forEach((name, index) => state.assignments[index % state.teamCount].push(name));
+      save();
+      renderPreview();
+      return true;
+    }
+
+    function renderPreview() {
+      const area = byId("team-preview");
+      area.replaceChildren();
+      if (!validAssignments()) return;
+      const cards = state.assignments.map((members, index) => {
+        const card = document.createElement("section");
+        card.className = "preview-card";
+        const title = document.createElement("strong");
+        title.textContent = defaultName(index);
+        const list = document.createElement("ul");
+        for (const member of members) {
+          const li = document.createElement("li");
+          li.textContent = member;
+          list.append(li);
+        }
+        card.append(title, list);
+        return card;
+      });
+      area.append(...cards);
+    }
+
+    function refreshForm() {
+      const auto = state.mode === "auto";
+      byId("manual-area").hidden = auto;
+      byId("auto-area").hidden = !auto;
+      byId("mode-manual").setAttribute("aria-pressed", String(!auto));
+      byId("mode-auto").setAttribute("aria-pressed", String(auto));
+      const goodLimit = missLimitInput.value !== "" &&
+        Number.isSafeInteger(Number(missLimitInput.value)) &&
+        Number(missLimitInput.value) >= 1 &&
+        missLimitInput.validity.valid;
+      const goodTeams = !auto || validTeamCount();
+      byId("shuffle").disabled = !validTeamCount();
+      byId("start-game").disabled = !goodLimit || !goodTeams;
+      const warning = byId("team-warning");
+      warning.hidden = !auto || !state.rosterText.trim() || goodTeams;
+      warning.textContent = warning.hidden ? "" :
+        (roster().length < 2 ? "選手を2人以上入力してください" :
+        "チーム数は2以上、選手数以下にしてください");
+    }
+
+    function renderManual() {
       teamFields.replaceChildren();
-      state.names.forEach((name, index) => {
+      state.manualNames.forEach((name, index) => {
         const row = byId("team-row").content.cloneNode(true);
         row.querySelector(".team-order").textContent = index + 1;
         const input = row.querySelector("input");
         input.value = name;
         input.placeholder = defaultName(index);
-        input.setAttribute("aria-label", `${index + 1}番目のチーム名`);
+        input.setAttribute("aria-label", (index + 1) + "番目のチーム名");
         input.addEventListener("input", () => {
-          state.names[index] = input.value;
+          state.manualNames[index] = input.value;
           save();
         });
         const remove = row.querySelector("button");
-        remove.setAttribute("aria-label", `${index + 1}番目のチームを削除`);
-        remove.disabled = state.names.length === 2;
+        remove.setAttribute("aria-label", (index + 1) + "番目のチームを削除");
+        remove.disabled = state.manualNames.length <= 2;
         remove.addEventListener("click", () => {
-          state.names.splice(index, 1);
+          state.manualNames.splice(index, 1);
           save();
-          renderSetup();
-          teamFields.children[Math.min(index, state.names.length - 1)].querySelector("input").focus();
+          renderManual();
+          teamFields.children[Math.min(index, state.manualNames.length - 1)]
+            .querySelector("input").focus();
         });
         teamFields.append(row);
       });
     }
 
+    function renderSetup() {
+      renderManual();
+      playersInput.value = state.rosterText;
+      teamCountInput.value = state.teamCount;
+      missLimitInput.value = state.missLimit;
+      renderPreview();
+      refreshForm();
+    }
+
+    function replay() {
+      const teams = state.names.map(name => ({ name, score: 0, misses: 0 }));
+      const entries = [];
+      let turn = 0;
+      let winner = null;
+      let ended = false;
+      for (const points of state.throws) {
+        if (ended) break;
+        const team = teams[turn];
+        team.misses = points === 0 ? team.misses + 1 : 0;
+        team.score += points;
+        if (team.score > TARGET) team.score = RESET_SCORE;
+        const out = team.misses >= state.missLimit;
+        if (out) team.score = 0;
+        entries.push({ name: team.name, points, total: team.score, out });
+        if (!out && team.score === TARGET) {
+          winner = team;
+          ended = true;
+          break;
+        }
+        const remaining = teams.filter(candidate => candidate.misses < state.missLimit);
+        if (remaining.length === 0) {
+          ended = true;
+          break;
+        }
+        if (remaining.length === 1) {
+          winner = remaining[0];
+          ended = true;
+          break;
+        }
+        do {
+          turn = (turn + 1) % teams.length;
+        } while (teams[turn].misses >= state.missLimit);
+      }
+      return { teams, entries, active: teams[turn], winner, ended };
+    }
+
     function renderScoreboard(teams, active, winner) {
-      const rows = teams.map(team => {
+      const rows = teams.map((team, index) => {
         const row = byId("score-row").content.firstElementChild.cloneNode(true);
         row.querySelector(".team-name").textContent = team.name;
         row.querySelector(".score").textContent = team.score;
+        const members = state.mode === "auto" && state.assignments[index];
+        row.querySelector(".team-members").textContent = members ? members.join("・") : "";
         const label = row.querySelector(".row-label");
         const misses = row.querySelector(".misses");
         if (team === winner) {
           row.dataset.state = "winner";
           label.textContent = "勝利";
-        } else if (!winner && team === active) {
+        } else if (!winner && team === active && team.misses < state.missLimit) {
           row.dataset.state = "active";
           label.textContent = "投球中";
         }
-        if (team.misses === MISS_LIMIT) {
+        if (team.misses >= state.missLimit) {
           row.dataset.state = "out";
           const out = document.createElement("span");
           out.className = "out";
           out.textContent = "失格";
           misses.append(out);
         } else {
-          const dots = document.createElement("span");
-          dots.className = "miss-dots";
-          dots.setAttribute("role", "img");
-          dots.setAttribute("aria-label", `連続ミス ${team.misses}回`);
-          for (let index = 0; index < MISS_LIMIT; index += 1) {
-            const dot = document.createElement("span");
-            dot.className = index < team.misses ? "miss-dot filled" : "miss-dot";
-            dots.append(dot);
-          }
-          misses.append(dots);
+          const count = document.createElement("span");
+          count.className = "miss-count" + (team.misses ? " alert" : "");
+          count.textContent = team.misses + " / " + state.missLimit;
+          count.setAttribute("aria-label",
+            "連続ミス " + team.misses + "回、失格まで" + state.missLimit + "回");
+          misses.append(count);
         }
         return row;
       });
@@ -359,12 +542,14 @@
     function renderHistory(entries) {
       history.hidden = entries.length === 0;
       if (!history.open || history.hidden) return;
-
-      const rows = entries.map(({ team, points, total, out }, index) => {
+      const rows = entries.map(({ name, points, total, out }, index) => {
         const row = document.createElement("li");
-        for (const text of [index + 1, team.name, out ? "ミス → 失格" : `${points === 0 ? "ミス" : `+${points}`} → ${total}点`]) {
+        const values = [index + 1, name,
+          out ? "ミス → 失格" :
+          (points === 0 ? "ミス" : "+" + points) + " → " + total + "点"];
+        for (const value of values) {
           const cell = document.createElement("span");
-          cell.textContent = text;
+          cell.textContent = value;
           row.append(cell);
         }
         return row;
@@ -373,15 +558,15 @@
     }
 
     function renderGame() {
-      const { teams, entries, active, winner } = replay();
+      const { teams, entries, active, winner, ended } = replay();
       renderScoreboard(teams, active, winner);
-      byId("turn-label").textContent = winner ? "勝利" : "投球チーム";
-      byId("turn-name").textContent = (winner ?? active).name;
-      keypad.hidden = Boolean(winner);
-      nextGame.hidden = !winner;
+      byId("turn-label").textContent = winner ? "勝利" : ended ? "試合終了" : "投球チーム";
+      byId("turn-name").textContent = winner ? winner.name : ended ? "全チーム失格" : active.name;
+      keypad.hidden = ended;
+      nextGame.hidden = !ended;
       undo.disabled = entries.length === 0;
       renderHistory(entries);
-      return winner;
+      return ended;
     }
 
     function renderView() {
@@ -393,7 +578,19 @@
     }
 
     function startGame() {
-      state.names = state.names.map((name, index) => name.trim() || defaultName(index));
+      if (missLimitInput.value === "" ||
+          !Number.isSafeInteger(Number(missLimitInput.value)) ||
+          Number(missLimitInput.value) < 1) return;
+      state.missLimit = Number(missLimitInput.value);
+      if (state.mode === "auto") {
+        if (!validTeamCount()) return;
+        if (!validAssignments() && !shuffleTeams()) return;
+        state.names = state.assignments.map((_, index) => defaultName(index));
+      } else {
+        state.manualNames = state.manualNames.map((name, index) =>
+          name.trim() || defaultName(index));
+        state.names = state.manualNames.slice();
+      }
       state.started = true;
       state.throws = [];
       history.open = false;
@@ -402,13 +599,13 @@
       keypad.firstElementChild.focus();
     }
 
-    for (let points = 1; points <= MAX_THROW + 1; points += 1) {
+    for (let points = 1; points <= MAX_THROW + 1; points++) {
       const isMiss = points > MAX_THROW;
       const key = document.createElement("button");
       key.type = "button";
       key.className = isMiss ? "key miss-key" : "key";
-      key.textContent = isMiss ? "ミス（0点）" : points;
-      if (!isMiss) key.setAttribute("aria-label", `${points}点`);
+      key.textContent = isMiss ? "ミス（0点）" : String(points);
+      if (!isMiss) key.setAttribute("aria-label", points + "点");
       key.addEventListener("click", () => {
         if (!state.started || keypad.hidden) return;
         state.throws.push(isMiss ? 0 : points);
@@ -419,17 +616,45 @@
     }
 
     byId("add-team").addEventListener("click", () => {
-      let index = state.names.length;
-      while (state.names.includes(defaultName(index))) index += 1;
-      state.names.push(defaultName(index));
+      let index = state.manualNames.length;
+      while (state.manualNames.includes(defaultName(index))) index++;
+      state.manualNames.push(defaultName(index));
       save();
-      renderSetup();
+      renderManual();
       teamFields.lastElementChild.querySelector("input").select();
+    });
+
+    byId("mode-manual").addEventListener("click", () => {
+      state.mode = "manual"; save(); refreshForm();
+    });
+    byId("mode-auto").addEventListener("click", () => {
+      state.mode = "auto"; save(); refreshForm(); playersInput.focus();
+    });
+    playersInput.addEventListener("input", () => {
+      state.rosterText = playersInput.value;
+      state.assignments = [];
+      save(); renderPreview(); refreshForm();
+    });
+    teamCountInput.addEventListener("input", () => {
+      state.teamCount = teamCountInput.value === "" ? NaN : Number(teamCountInput.value);
+      state.assignments = [];
+      save(); renderPreview(); refreshForm();
+    });
+    missLimitInput.addEventListener("input", () => {
+      const candidate = Number(missLimitInput.value);
+      if (missLimitInput.value !== "" && Number.isSafeInteger(candidate) &&
+          candidate >= 1) {
+        state.missLimit = candidate; save();
+      }
+      refreshForm();
+    });
+    byId("shuffle").addEventListener("click", () => {
+      shuffleTeams();
     });
 
     setup.addEventListener("submit", event => {
       event.preventDefault();
-      startGame();
+      if (!byId("start-game").disabled) startGame();
     });
 
     undo.addEventListener("click", () => {
@@ -442,13 +667,14 @@
     nextGame.addEventListener("click", startGame);
 
     editTeams.addEventListener("click", () => {
-      if (state.throws.length && !replay().winner &&
+      if (state.throws.length && !replay().ended &&
           !window.confirm("進行中の試合を終了して、チーム設定を開きますか？")) return;
       state.started = false;
       state.throws = [];
       save();
       renderView();
-      teamFields.firstElementChild.querySelector("input").focus();
+      (state.mode === "auto" ? playersInput :
+        teamFields.firstElementChild.querySelector("input")).focus();
     });
 
     history.addEventListener("toggle", () => {
