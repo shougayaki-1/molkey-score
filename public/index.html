@@ -184,6 +184,24 @@
       .team-preview { grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); }
       .scoreboard thead th:nth-child(3) { width: 5.8rem; }
     }
+
+    .turn-team { display: block; color: var(--muted); font-size: .98rem; font-weight: 650; overflow-wrap: anywhere; }
+    .turn-player { display: block; margin-top: 4px; font-size: clamp(1.25rem, 4vw, 1.8rem); font-weight: 750; overflow-wrap: anywhere; letter-spacing: -.025em; }
+    .turn-player:empty { display: none; }
+    .game-rule-panel { margin-top: 12px; border-top: 1px solid var(--line); }
+    .game-rule-panel summary { padding: 13px 0 3px; cursor: pointer; color: var(--muted); font-size: .88rem; font-weight: 650; }
+    .game-rule-panel form { padding: 10px 0 2px; }
+    .rule-grid { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; }
+    .rule-grid .number-field { flex-wrap: nowrap; }
+    .rule-grid .number-field input { width: 70px; }
+    .rule-apply { margin-top: 12px; }
+    .controls .control-actions { flex-wrap: wrap; }
+    .controls .control-actions #skip-turn { flex-basis: 100%; }
+    @media (max-width: 640px) {
+      .rule-grid { display: grid; gap: 12px; }
+      .rule-grid .number-field { justify-content: space-between; }
+      .rule-grid .number-field input { margin-left: auto; }
+    }
   </style>
 </head>
 <body>
@@ -223,10 +241,18 @@
       </div>
 
       <div class="rule-settings">
-        <label class="number-field" for="miss-limit">連続ミスで失格
-          <input id="miss-limit" type="number" min="1" step="1" inputmode="numeric" value="3">
-          <span>回</span>
-        </label>
+        <div class="rule-grid">
+          <label class="number-field" for="target-score">目標得点
+            <input id="target-score" type="number" min="1" max="999" step="1" inputmode="numeric" value="50">
+          </label>
+          <label class="number-field" for="reset-score">超過時の得点
+            <input id="reset-score" type="number" min="0" max="998" step="1" inputmode="numeric" value="25">
+          </label>
+          <label class="number-field" for="miss-limit">連続ミスで失格
+            <input id="miss-limit" type="number" min="1" max="999" step="1" inputmode="numeric" value="3">
+            <span>回</span>
+          </label>
+        </div>
       </div>
       <button id="start-game" class="primary start-game" type="submit">試合開始</button>
     </form>
@@ -241,16 +267,37 @@
       <section class="panel controls" aria-label="得点入力">
         <h2 class="turn" aria-live="polite" aria-atomic="true">
           <span id="turn-label" class="turn-label"></span>
-          <span id="turn-name" class="turn-name"></span>
+          <span id="turn-name" class="turn-team"></span>
+          <span id="turn-player" class="turn-player"></span>
         </h2>
         <div id="keypad" class="keypad" role="group" aria-label="投球点"></div>
         <div class="control-actions">
-          <button id="undo" type="button">1投戻す</button>
+          <button id="skip-turn" type="button">この番をスキップ</button>
+          <button id="undo" type="button">1操作戻す</button>
           <button id="next-game" class="primary" type="button" hidden>次の試合</button>
         </div>
+        <details id="game-rules" class="game-rule-panel">
+          <summary>ルール変更</summary>
+          <form id="game-rules-form" novalidate>
+            <div class="rule-grid">
+              <label class="number-field" for="game-target-score">目標得点
+                <input id="game-target-score" type="number" min="1" max="999" step="1" inputmode="numeric" required>
+              </label>
+              <label class="number-field" for="game-reset-score">超過時の得点
+                <input id="game-reset-score" type="number" min="0" max="998" step="1" inputmode="numeric" required>
+              </label>
+              <label class="number-field" for="game-miss-limit">連続ミスで失格
+                <input id="game-miss-limit" type="number" min="1" max="999" step="1" inputmode="numeric" required>
+                <span>回</span>
+              </label>
+            </div>
+            <p id="game-rule-error" class="form-error" role="status" hidden></p>
+            <button class="primary rule-apply" type="submit">変更を適用</button>
+          </form>
+        </details>
       </section>
       <details id="history" class="panel log" hidden>
-        <summary>投球履歴</summary>
+        <summary>操作履歴</summary>
         <ol id="history-list"></ol>
       </details>
     </section>
@@ -285,52 +332,105 @@
     const teamFields = byId("team-fields");
     const keypad = byId("keypad");
     const undo = byId("undo");
+    const skipTurn = byId("skip-turn");
     const editTeams = byId("edit-teams");
     const nextGame = byId("next-game");
     const history = byId("history");
     const playersInput = byId("players");
     const teamCountInput = byId("team-count");
     const missLimitInput = byId("miss-limit");
+    const targetInput = byId("target-score");
+    const resetInput = byId("reset-score");
+    const gameRules = byId("game-rules");
+    const gameRulesForm = byId("game-rules-form");
     let state = load();
+
+    function rulesValid(rules) {
+      return Number.isSafeInteger(rules.targetScore) &&
+        rules.targetScore >= 1 && rules.targetScore <= 999 &&
+        Number.isSafeInteger(rules.resetScore) &&
+        rules.resetScore >= 0 && rules.resetScore < rules.targetScore &&
+        Number.isSafeInteger(rules.missLimit) &&
+        rules.missLimit >= 1 && rules.missLimit <= 999;
+    }
+
+    function toRules(targetScore, resetScore, missLimit) {
+      return { targetScore, resetScore, missLimit };
+    }
 
     function load() {
       const fallback = {
         names: ["チーム1", "チーム2"],
         manualNames: ["チーム1", "チーム2"],
-        throws: [],
+        actions: [],
         started: false,
         mode: "manual",
         rosterText: "",
         teamCount: 2,
         assignments: [],
-        missLimit: 3
+        missLimit: 3,
+        targetScore: TARGET,
+        resetScore: RESET_SCORE,
+        gameRules: toRules(TARGET, RESET_SCORE, 3)
       };
       try {
         const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
         if (!saved ||
             !Array.isArray(saved.names) || saved.names.length < 2 ||
             !saved.names.every(name => typeof name === "string") ||
-            !Array.isArray(saved.throws) ||
-            !saved.throws.every(points => Number.isInteger(points) && points >= 0 && points <= MAX_THROW) ||
             typeof saved.started !== "boolean") return fallback;
+
+        const base = toRules(
+          Number.isSafeInteger(saved.targetScore) ? saved.targetScore : TARGET,
+          Number.isSafeInteger(saved.resetScore) ? saved.resetScore : RESET_SCORE,
+          Number.isSafeInteger(saved.missLimit) ? saved.missLimit : 3
+        );
+        if (!rulesValid(base)) {
+          base.targetScore = TARGET;
+          base.resetScore = RESET_SCORE;
+          base.missLimit = 3;
+        }
+        const gameRules = saved.gameRules && rulesValid(saved.gameRules)
+          ? saved.gameRules : { ...base };
+
+        // Older saved games contain a simple list of point values.
+        let actions;
+        if (Array.isArray(saved.actions)) {
+          actions = saved.actions;
+          if (!actions.every(action => action && (
+              (action.type === "throw" && Number.isInteger(action.points) &&
+                action.points >= 0 && action.points <= MAX_THROW) ||
+              action.type === "skip" ||
+              (action.type === "rules" && rulesValid(action.rules))
+            ))) return fallback;
+        } else if (Array.isArray(saved.throws) &&
+          saved.throws.every(points => Number.isInteger(points) &&
+            points >= 0 && points <= MAX_THROW)) {
+          actions = saved.throws.map(points => ({ type: "throw", points }));
+        } else {
+          return fallback;
+        }
+
         const manualNames = Array.isArray(saved.manualNames) &&
           saved.manualNames.length >= 2 &&
           saved.manualNames.every(name => typeof name === "string")
           ? saved.manualNames : saved.names.slice();
+
         return {
           names: saved.names,
           manualNames,
-          throws: saved.throws,
+          actions,
           started: saved.started,
           mode: saved.mode === "auto" ? "auto" : "manual",
           rosterText: typeof saved.rosterText === "string" ? saved.rosterText : "",
-          teamCount: Number.isSafeInteger(saved.teamCount) && saved.teamCount >= 2 ? saved.teamCount : 2,
+          teamCount: Number.isSafeInteger(saved.teamCount) && saved.teamCount >= 2
+            ? saved.teamCount : 2,
           assignments: Array.isArray(saved.assignments) &&
             saved.assignments.every(group => Array.isArray(group) &&
               group.every(name => typeof name === "string"))
             ? saved.assignments : [],
-          missLimit: Number.isSafeInteger(saved.missLimit) && saved.missLimit >= 1
-            ? saved.missLimit : 3
+          ...base,
+          gameRules
         };
       } catch {
         return fallback;
@@ -411,20 +511,28 @@
       area.append(...cards);
     }
 
+    function numberFromInput(input) {
+      return input.value.trim() === "" ? NaN : Number(input.value);
+    }
+
+    function readRules(target, reset, misses) {
+      return toRules(numberFromInput(target), numberFromInput(reset),
+        numberFromInput(misses));
+    }
+
     function refreshForm() {
       const auto = state.mode === "auto";
       byId("manual-area").hidden = auto;
       byId("auto-area").hidden = !auto;
       byId("mode-manual").setAttribute("aria-pressed", String(!auto));
       byId("mode-auto").setAttribute("aria-pressed", String(auto));
-      const goodLimit = missLimitInput.value !== "" &&
-        Number.isSafeInteger(Number(missLimitInput.value)) &&
-        Number(missLimitInput.value) >= 1 &&
-        missLimitInput.validity.valid;
-      const goodTeams = !auto || validTeamCount();
       byId("shuffle").disabled = !validTeamCount();
-      byId("start-game").disabled = !goodLimit || !goodTeams;
+      byId("start-game").disabled = !rulesValid(
+        readRules(targetInput, resetInput, missLimitInput)) ||
+        (auto && !validTeamCount());
+
       const warning = byId("team-warning");
+      const goodTeams = validTeamCount();
       warning.hidden = !auto || !state.rosterText.trim() || goodTeams;
       warning.textContent = warning.hidden ? "" :
         (roster().length < 2 ? "選手を2人以上入力してください" :
@@ -463,48 +571,73 @@
       playersInput.value = state.rosterText;
       teamCountInput.value = state.teamCount;
       missLimitInput.value = state.missLimit;
+      targetInput.value = state.targetScore;
+      resetInput.value = state.resetScore;
       renderPreview();
       refreshForm();
     }
 
     function replay() {
-      const teams = state.names.map(name => ({ name, score: 0, misses: 0 }));
+      const teams = state.names.map(name => ({
+        name, score: 0, misses: 0, out: false, playerTurns: 0
+      }));
+      let rules = { ...state.gameRules };
       const entries = [];
       let turn = 0;
       let winner = null;
       let ended = false;
-      for (const points of state.throws) {
+      for (const action of state.actions) {
         if (ended) break;
+
+        if (action.type === "rules") {
+          rules = { ...action.rules };
+          entries.push({ type: "rules", rules: { ...rules } });
+          continue;
+        }
         const team = teams[turn];
-        team.misses = points === 0 ? team.misses + 1 : 0;
-        team.score += points;
-        if (team.score > TARGET) team.score = RESET_SCORE;
-        const out = team.misses >= state.missLimit;
-        if (out) team.score = 0;
-        entries.push({ name: team.name, points, total: team.score, out });
-        if (!out && team.score === TARGET) {
-          winner = team;
-          ended = true;
-          break;
-        }
-        const remaining = teams.filter(candidate => candidate.misses < state.missLimit);
-        if (remaining.length === 0) {
-          ended = true;
-          break;
-        }
-        if (remaining.length === 1) {
-          winner = remaining[0];
-          ended = true;
-          break;
+        const members = state.mode === "auto" && state.assignments[turn];
+        const player = Array.isArray(members) && members.length ?
+          members[team.playerTurns % members.length] : "";
+        team.playerTurns++;
+
+        if (action.type === "skip") {
+          entries.push({ type: "skip", name: team.name, player, total: team.score });
+        } else {
+          const points = action.points;
+          team.misses = points === 0 ? team.misses + 1 : 0;
+          team.score += points;
+          if (team.score > rules.targetScore) team.score = rules.resetScore;
+          const out = team.misses >= rules.missLimit;
+          if (out) {
+            team.score = 0;
+            team.out = true;
+          }
+          entries.push({ type: "throw", name: team.name, player,
+            points, total: team.score, out });
+          if (!out && team.score === rules.targetScore) {
+            winner = team;
+            ended = true;
+            break;
+          }
+          const remaining = teams.filter(candidate => !candidate.out);
+          if (remaining.length <= 1) {
+            winner = remaining[0] || null;
+            ended = true;
+            break;
+          }
         }
         do {
           turn = (turn + 1) % teams.length;
-        } while (teams[turn].misses >= state.missLimit);
+        } while (teams[turn].out);
       }
-      return { teams, entries, active: teams[turn], winner, ended };
+      const active = teams[turn];
+      const members = state.mode === "auto" && state.assignments[turn];
+      const nextPlayer = Array.isArray(members) && members.length ?
+        members[active.playerTurns % members.length] : "";
+      return { teams, entries, active, nextPlayer, winner, ended, rules };
     }
 
-    function renderScoreboard(teams, active, winner) {
+    function renderScoreboard(teams, active, winner, rules) {
       const rows = teams.map((team, index) => {
         const row = byId("score-row").content.firstElementChild.cloneNode(true);
         row.querySelector(".team-name").textContent = team.name;
@@ -516,11 +649,11 @@
         if (team === winner) {
           row.dataset.state = "winner";
           label.textContent = "勝利";
-        } else if (!winner && team === active && team.misses < state.missLimit) {
+        } else if (!winner && team === active && !team.out) {
           row.dataset.state = "active";
           label.textContent = "投球中";
         }
-        if (team.misses >= state.missLimit) {
+        if (team.out) {
           row.dataset.state = "out";
           const out = document.createElement("span");
           out.className = "out";
@@ -529,9 +662,9 @@
         } else {
           const count = document.createElement("span");
           count.className = "miss-count" + (team.misses ? " alert" : "");
-          count.textContent = team.misses + " / " + state.missLimit;
+          count.textContent = team.misses + " / " + rules.missLimit;
           count.setAttribute("aria-label",
-            "連続ミス " + team.misses + "回、失格まで" + state.missLimit + "回");
+            "連続ミス " + team.misses + "回、失格判定 " + rules.missLimit + "回");
           misses.append(count);
         }
         return row;
@@ -542,11 +675,19 @@
     function renderHistory(entries) {
       history.hidden = entries.length === 0;
       if (!history.open || history.hidden) return;
-      const rows = entries.map(({ name, points, total, out }, index) => {
+      const rows = entries.map((entry, index) => {
         const row = document.createElement("li");
-        const values = [index + 1, name,
-          out ? "ミス → 失格" :
-          (points === 0 ? "ミス" : "+" + points) + " → " + total + "点"];
+        let values;
+        if (entry.type === "rules") {
+          const r = entry.rules;
+          values = [index + 1, "ルール変更",
+            "目標" + r.targetScore + " / 超過" + r.resetScore + " / ミス" + r.missLimit + "回"];
+        } else {
+          values = [index + 1, entry.name + (entry.player ? " / " + entry.player : ""),
+            entry.type === "skip" ? "スキップ" :
+            entry.out ? "ミス → 失格" :
+            (entry.points === 0 ? "ミス" : "+" + entry.points) + " → " + entry.total + "点"];
+        }
         for (const value of values) {
           const cell = document.createElement("span");
           cell.textContent = value;
@@ -557,14 +698,28 @@
       byId("history-list").replaceChildren(...rows.reverse());
     }
 
+    function fillGameRules(rules) {
+      byId("game-target-score").value = rules.targetScore;
+      byId("game-reset-score").value = rules.resetScore;
+      byId("game-miss-limit").value = rules.missLimit;
+      byId("game-rule-error").hidden = true;
+    }
+
     function renderGame() {
-      const { teams, entries, active, winner, ended } = replay();
-      renderScoreboard(teams, active, winner);
-      byId("turn-label").textContent = winner ? "勝利" : ended ? "試合終了" : "投球チーム";
-      byId("turn-name").textContent = winner ? winner.name : ended ? "全チーム失格" : active.name;
+      const result = replay();
+      const { teams, entries, active, nextPlayer, winner, ended, rules } = result;
+      renderScoreboard(teams, active, winner, rules);
+      byId("turn-label").textContent = winner ? "勝利" : ended ? "試合終了" : "次の投球者";
+      byId("turn-name").textContent = winner ? winner.name :
+        ended ? "全チーム失格" : active.name;
+      byId("turn-player").textContent = ended ? "" : nextPlayer;
       keypad.hidden = ended;
+      skipTurn.hidden = ended;
       nextGame.hidden = !ended;
-      undo.disabled = entries.length === 0;
+      undo.disabled = state.actions.length === 0;
+      gameRules.hidden = ended;
+      if (ended) gameRules.open = false;
+      if (!gameRules.open) fillGameRules(rules);
       renderHistory(entries);
       return ended;
     }
@@ -578,10 +733,16 @@
     }
 
     function startGame() {
-      if (missLimitInput.value === "" ||
-          !Number.isSafeInteger(Number(missLimitInput.value)) ||
-          Number(missLimitInput.value) < 1) return;
-      state.missLimit = Number(missLimitInput.value);
+      const rules = readRules(targetInput, resetInput, missLimitInput);
+      // During a finished game, the setup fields are not visible;
+      // current saved defaults must be used for the following game.
+      const freshRules = state.started
+        ? toRules(state.targetScore, state.resetScore, state.missLimit)
+        : rules;
+      if (!rulesValid(freshRules)) return;
+      Object.assign(state, freshRules);
+      state.gameRules = { ...freshRules };
+
       if (state.mode === "auto") {
         if (!validTeamCount()) return;
         if (!validAssignments() && !shuffleTeams()) return;
@@ -592,11 +753,19 @@
         state.names = state.manualNames.slice();
       }
       state.started = true;
-      state.throws = [];
+      state.actions = [];
       history.open = false;
+      gameRules.open = false;
       save();
       renderView();
       keypad.firstElementChild.focus();
+    }
+
+    function registerAction(action) {
+      if (!state.started || replay().ended) return;
+      state.actions.push(action);
+      save();
+      if (renderGame()) nextGame.focus();
     }
 
     for (let points = 1; points <= MAX_THROW + 1; points++) {
@@ -606,12 +775,8 @@
       key.className = isMiss ? "key miss-key" : "key";
       key.textContent = isMiss ? "ミス（0点）" : String(points);
       if (!isMiss) key.setAttribute("aria-label", points + "点");
-      key.addEventListener("click", () => {
-        if (!state.started || keypad.hidden) return;
-        state.throws.push(isMiss ? 0 : points);
-        save();
-        if (renderGame()) nextGame.focus();
-      });
+      key.addEventListener("click", () =>
+        registerAction({ type: "throw", points: isMiss ? 0 : points }));
       keypad.append(key);
     }
 
@@ -640,26 +805,58 @@
       state.assignments = [];
       save(); renderPreview(); refreshForm();
     });
-    missLimitInput.addEventListener("input", () => {
-      const candidate = Number(missLimitInput.value);
-      if (missLimitInput.value !== "" && Number.isSafeInteger(candidate) &&
-          candidate >= 1) {
-        state.missLimit = candidate; save();
-      }
-      refreshForm();
-    });
-    byId("shuffle").addEventListener("click", () => {
-      shuffleTeams();
-    });
+    for (const [input, key] of [
+      [missLimitInput, "missLimit"],
+      [targetInput, "targetScore"],
+      [resetInput, "resetScore"]
+    ]) {
+      input.addEventListener("input", () => {
+        const rules = readRules(targetInput, resetInput, missLimitInput);
+        if (rulesValid(rules)) {
+          state.missLimit = rules.missLimit;
+          state.targetScore = rules.targetScore;
+          state.resetScore = rules.resetScore;
+          save();
+        }
+        refreshForm();
+      });
+    }
+    byId("shuffle").addEventListener("click", shuffleTeams);
 
     setup.addEventListener("submit", event => {
       event.preventDefault();
       if (!byId("start-game").disabled) startGame();
     });
 
+    skipTurn.addEventListener("click", () => registerAction({ type: "skip" }));
+
+    gameRulesForm.addEventListener("submit", event => {
+      event.preventDefault();
+      if (!state.started || replay().ended) return;
+      const rules = readRules(
+        byId("game-target-score"), byId("game-reset-score"), byId("game-miss-limit"));
+      const error = byId("game-rule-error");
+      if (!rulesValid(rules)) {
+        error.textContent = "目標得点は1以上、超過時は0以上で目標未満、ミス回数は1以上にしてください";
+        error.hidden = false;
+        return;
+      }
+      Object.assign(state, rules);
+      state.actions.push({ type: "rules", rules: { ...rules } });
+      gameRules.open = false;
+      save();
+      renderGame();
+    });
+
+    gameRules.addEventListener("toggle", () => {
+      if (gameRules.open && state.started) fillGameRules(replay().rules);
+    });
+
     undo.addEventListener("click", () => {
-      if (!state.started || state.throws.length === 0) return;
-      state.throws.pop();
+      if (!state.started || state.actions.length === 0) return;
+      state.actions.pop();
+      const { rules } = replay();
+      Object.assign(state, rules);
       save();
       renderGame();
       if (undo.disabled) keypad.firstElementChild.focus();
@@ -667,10 +864,10 @@
     nextGame.addEventListener("click", startGame);
 
     editTeams.addEventListener("click", () => {
-      if (state.throws.length && !replay().ended &&
+      if (state.actions.length && !replay().ended &&
           !window.confirm("進行中の試合を終了して、チーム設定を開きますか？")) return;
       state.started = false;
-      state.throws = [];
+      state.actions = [];
       save();
       renderView();
       (state.mode === "auto" ? playersInput :
